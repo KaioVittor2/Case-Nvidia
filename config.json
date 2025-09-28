@@ -1,0 +1,16 @@
+{
+  "api_keys": {
+    "OPENAI_API_KEY": "OPENAI_API_KEY",
+    "PERPLEXITY_API_KEY": "PERPLEXITY_API_KEY",
+    "CNPJA_API_KEY": "CNPJA_API_KEY"
+  },
+  "llm": {
+    "model": "sonar-pro",
+    "base_url": "https://api.perplexity.ai/"
+  },
+  "flask": {
+    "host": "0.0.0.0",
+    "port": 8000,
+    "debug": true
+  }
+}
