@@ -5,3 +5,4 @@ crewai[tools]
 langchain-perplexity
 pandas
 requests
+flask_sqlalchemy
