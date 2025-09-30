@@ -1,185 +1,212 @@
-"""
-Deep Research Agent - Pesquisa em múltiplas camadas usando Exa e Cerebras
-Baseado no notebook Deep_Research_agents_Nvidia.ipynb
-"""
-
-import os
-from typing import List, Dict, Optional
+# arquivo: src/agents/deep_research_agent.py
 from crewai import Agent, LLM
+import os
 
-# Importar as bibliotecas necessárias
 try:
     from exa_py import Exa
     from cerebras.cloud.sdk import Cerebras
-except ImportError as e:
-    print(f"⚠️ Erro ao importar bibliotecas: {e}")
-    print("Certifique-se de ter instalado: pip install exa-py cerebras-cloud-sdk")
-    raise
+    DEPENDENCIES_AVAILABLE = True
+except ImportError:
+    DEPENDENCIES_AVAILABLE = False
+    print("⚠️ Deep Research dependencies not available. Install: pip install exa-py cerebras-cloud-sdk")
 
-class DeepResearchAgent:
-    """Agente especializado em pesquisa profunda usando Exa e Cerebras"""
+# Inicializar clientes apenas se dependências disponíveis
+if DEPENDENCIES_AVAILABLE:
+    exa_client = Exa(api_key=os.environ.get("EXA_API_KEY", ""))
+    cerebras_client = Cerebras(api_key=os.environ.get("CEREBRAS_API_KEY", ""))
     
-    def __init__(self):
-        """Inicializa o agente com as APIs necessárias"""
-        # Carregar chaves de API
-        self.exa_api_key = os.environ.get("EXA_API_KEY")
-        self.cerebras_api_key = os.environ.get("CEREBRAS_API_KEY")
-        
-        if not self.exa_api_key:
-            raise ValueError("EXA_API_KEY não encontrada. Configure no arquivo keys.env")
-        if not self.cerebras_api_key:
-            raise ValueError("CEREBRAS_API_KEY não encontrada. Configure no arquivo keys.env")
-        
-        # Inicializar clientes das APIs
-        try:
-            self.exa_client = Exa(api_key=self.exa_api_key)
-            self.cerebras_client = Cerebras(api_key=self.cerebras_api_key)
-            print("✅ APIs Exa e Cerebras inicializadas com sucesso")
-        except Exception as e:
-            print(f"❌ Erro ao inicializar APIs: {e}")
-            raise
+    # Configurar LLM da Cerebras para o agente
+    cerebras_llm = LLM(
+        model="llama-4-scout-17b-16e-instruct",
+        api_key=os.environ.get("CEREBRAS_API_KEY", ""),
+        base_url="https://api.cerebras.ai/v1"
+    )
+else:
+    exa_client = None
+    cerebras_client = None
+    cerebras_llm = None
+
+# Criar agente
+deep_research_agent = Agent(
+    role="Especialista em Pesquisa Profunda de Venture Capital",
+    goal="Realizar pesquisas detalhadas em múltiplas camadas sobre startups investidas por VCs",
+    backstory=(
+        "Você é um pesquisador especializado em venture capital com acesso a ferramentas "
+        "avançadas de busca e análise. Você realiza pesquisas em camadas, primeiro coletando "
+        "informações gerais e depois aprofundando em aspectos específicos para obter dados "
+        "completos e precisos sobre investimentos de VCs em startups."
+    ),
+    llm=cerebras_llm,
+    verbose=True,
+    allow_delegation=False
+) if DEPENDENCIES_AVAILABLE else None
+
+def search_web_exa(query, num_results=5):
+    """
+    Busca na web usando a API da Exa
     
-    def search_web_exa(self, query: str, num_results: int = 5) -> List[Dict]:
-        """
-        Realiza busca na web usando Exa API
-        Baseado na função search_web do notebook
-        """
-        try:
-            print(f"🔍 Buscando: '{query}' (até {num_results} resultados)")
-            
-            result = self.exa_client.search_and_contents(
-                query,
-                type="auto",
-                num_results=num_results,
-                text={"max_characters": 1000}
-            )
-            
-            # Processar resultados
-            sources = []
-            for res in result.results:
-                if hasattr(res, 'text') and res.text:
-                    sources.append({
-                        "title": getattr(res, 'title', 'Sem título'),
-                        "content": res.text,
-                        "url": getattr(res, 'url', ''),
-                        "published_date": getattr(res, 'published_date', '')
-                    })
-            
-            print(f"✓ Encontrados {len(sources)} resultados relevantes")
-            return sources
-            
-        except Exception as e:
-            print(f"❌ Erro na busca Exa: {e}")
-            return []
+    Args:
+        query (str): Consulta de pesquisa
+        num_results (int): Número de resultados desejados
     
-    def analyze_with_cerebras(self, prompt: str, max_tokens: int = 600, temperature: float = 0.2) -> str:
-        """
-        Analisa conteúdo usando Cerebras AI
-        Baseado na função ask_ai do notebook
-        """
-        try:
-            print(f"🧠 Analisando com Cerebras (max_tokens={max_tokens})")
-            
-            chat_completion = self.cerebras_client.chat.completions.create(
-                messages=[
-                    {
-                        "role": "user",
-                        "content": prompt,
-                    }
-                ],
-                model="llama-4-scout-17b-16e-instruct",
-                max_tokens=max_tokens,
-                temperature=temperature
-            )
-            
-            response = chat_completion.choices[0].message.content
-            print("✓ Análise concluída")
-            return response
-            
-        except Exception as e:
-            print(f"❌ Erro na análise Cerebras: {e}")
-            return ""
+    Returns:
+        list: Lista de resultados com título e conteúdo
+    """
+    if not DEPENDENCIES_AVAILABLE or not exa_client:
+        raise RuntimeError("Exa API not available. Install exa-py.")
     
-    def generate_followup_question(self, initial_sources: List[Dict], original_query: str) -> str:
-        """
-        Gera uma pergunta de aprofundamento baseada nas fontes iniciais
-        """
-        # Criar contexto das fontes iniciais
-        context = f"Pesquisa original: {original_query}\n\nFontes encontradas:\n"
-        for i, source in enumerate(initial_sources[:4], 1):
-            context += f"{i}. {source['title']}: {source['content'][:300]}...\n\n"
+    try:
+        result = exa_client.search_and_contents(
+            query,
+            type="auto",
+            num_results=num_results,
+            text={"max_characters": 1000}
+        )
         
-        # Prompt para gerar pergunta de follow-up
-        prompt = f"""{context}
-
-Com base nestas fontes sobre "{original_query}", qual é a pergunta de acompanhamento mais importante 
-que aprofundaria nosso entendimento sobre as startups investidas e seus detalhes específicos?
-
-Responda apenas com uma consulta de pesquisa específica e focada (sem explicação):"""
+        sources = []
+        for r in result.results:
+            if r.text and len(r.text) > 200:
+                sources.append({
+                    "title": r.title or "Untitled",
+                    "content": r.text,
+                    "url": getattr(r, 'url', '')
+                })
         
-        followup = self.analyze_with_cerebras(prompt, max_tokens=100, temperature=0.3)
-        return followup.strip().strip('"')
+        return sources
+    except Exception as e:
+        print(f"Erro na busca Exa: {str(e)}")
+        return []
+
+def analyze_with_cerebras(prompt, max_tokens=600, temperature=0.2):
+    """
+    Analisa texto usando a API da Cerebras
     
-    def synthesize_results(self, all_sources: List[Dict], original_query: str, followup_query: str) -> str:
-        """
-        Sintetiza todos os resultados em um formato estruturado JSON
-        """
-        # Criar contexto completo
-        context = f"Pesquisa original: {original_query}\n"
-        context += f"Pesquisa de aprofundamento: {followup_query}\n\n"
-        context += "Todas as fontes coletadas:\n"
-        
-        for i, source in enumerate(all_sources[:8], 1):
-            prefix = "[Aprofundamento] " if i > 4 else ""
-            context += f"{i}. {prefix}{source['title']}: {source['content'][:400]}...\n\n"
-        
-        # Prompt final para gerar lista estruturada
-        prompt = f"""{context}
+    Args:
+        prompt (str): Prompt para análise
+        max_tokens (int): Número máximo de tokens na resposta
+        temperature (float): Temperatura para geração
+    
+    Returns:
+        str: Resposta da IA
+    """
+    if not DEPENDENCIES_AVAILABLE or not cerebras_client:
+        raise RuntimeError("Cerebras API not available. Install cerebras-cloud-sdk.")
+    
+    try:
+        chat_completion = cerebras_client.chat.completions.create(
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt,
+                }
+            ],
+            model="llama-4-scout-17b-16e-instruct",
+            max_tokens=max_tokens,
+            temperature=temperature
+        )
+        return chat_completion.choices[0].message.content
+    except Exception as e:
+        print(f"Erro na análise Cerebras: {str(e)}")
+        return ""
 
-Com base em TODAS as fontes acima, liste as startups que foram investidas pelas VCs mencionadas.
+def generate_follow_up_query(initial_sources, original_query):
+    """
+    Gera uma pergunta de aprofundamento baseada nas fontes iniciais
+    
+    Args:
+        initial_sources (list): Fontes coletadas na primeira camada
+        original_query (str): Consulta original
+    
+    Returns:
+        str: Pergunta de aprofundamento
+    """
+    if not initial_sources:
+        return original_query + " detailed information"
+    
+    context = f"Consulta original: {original_query}\n\nFontes encontradas:\n"
+    for i, source in enumerate(initial_sources[:4], 1):
+        context += f"{i}. {source['title']}: {source['content'][:300]}...\n\n"
+    
+    prompt = f"""{context}
 
-IMPORTANTE: Sua resposta deve ser APENAS uma lista JSON válida, sem nenhum texto adicional antes ou depois.
-Cada startup deve ser um objeto com TODAS as seguintes chaves (use "Não informado" se não encontrar a informação):
+Com base nessas fontes sobre startups investidas por VCs, qual é a pergunta de aprofundamento 
+mais importante que nos ajudaria a obter informações mais detalhadas e específicas?
 
+Foque em:
+- Valores de investimento específicos
+- Datas e rodadas de investimento
+- Informações sobre fundadores
+- Setores e mercados
+
+Responda apenas com a pergunta de busca em inglês, sem explicações adicionais."""
+    
+    follow_up = analyze_with_cerebras(prompt, max_tokens=100, temperature=0.3)
+    return follow_up.strip().strip('"').strip("'")
+
+def synthesize_final_report(all_sources, vc_list, original_query, follow_up_query):
+    """
+    Sintetiza relatório final com todas as fontes coletadas
+    
+    Args:
+        all_sources (list): Todas as fontes coletadas
+        vc_list (list): Lista de VCs pesquisadas
+        original_query (str): Consulta original
+        follow_up_query (str): Consulta de aprofundamento
+    
+    Returns:
+        str: Relatório JSON estruturado
+    """
+    if not all_sources:
+        return '[]'
+    
+    context = f"""Consulta original: {original_query}
+Consulta de aprofundamento: {follow_up_query}
+VCs pesquisadas: {', '.join(vc_list)}
+
+Todas as fontes coletadas:
+"""
+    
+    for i, source in enumerate(all_sources[:10], 1):
+        context += f"{i}. {source['title']}: {source['content'][:500]}...\n\n"
+    
+    prompt = f"""{context}
+
+Com base em todas as fontes coletadas acima, crie uma lista JSON de startups investidas pelas VCs: {', '.join(vc_list)}.
+
+REGRAS CRÍTICAS:
+1. Retorne APENAS um array JSON válido, começando com [ e terminando com ]
+2. NÃO adicione texto antes ou depois do JSON
+3. NÃO use markdown, NÃO use ```json
+4. Busque pelo menos 10 startups para CADA VC mencionada
+5. Cada objeto deve ter EXATAMENTE estas chaves:
+   - nome (string)
+   - site (string, URL completa ou "Não informado")
+   - setor (string, ex: "Fintech", "SaaS", "E-commerce")
+   - ano_fundacao (string, ex: "2020" ou "Não informado")
+   - valor_investimento (string, ex: "US$ 10 milhões" ou "R$ 5 milhões")
+   - rodada (string, ex: "Série A", "Seed", "Série B")
+   - data_investimento (string, formato YYYY-MM-DD ou "Não informado")
+   - vc_investidor (string, nome da VC que investiu)
+   - descricao_breve (string, 1-2 frases sobre a startup)
+   - linkedin_fundador (string, URL do LinkedIn ou "Não informado")
+
+FORMATO ESPERADO:
 [
   {{
-    "nome": "Nome da Startup",
-    "site": "https://...",
-    "setor": "Categoria/Indústria",
-    "ano_fundacao": "Ano",
-    "valor_investimento": "Valor em USD",
-    "rodada": "Série/Rodada",
-    "data_investimento": "Data",
-    "vc_investidor": "Nome da VC",
-    "descricao_breve": "Breve descrição do que a empresa faz",
-    "linkedin_fundador": "Link do LinkedIn ou 'Não informado'"
+    "nome": "Airbnb",
+    "site": "https://www.airbnb.com",
+    "setor": "Marketplace",
+    "ano_fundacao": "2008",
+    "valor_investimento": "US$ 20 milhões",
+    "rodada": "Série A",
+    "data_investimento": "2010-11-16",
+    "vc_investidor": "Sequoia Capital",
+    "descricao_breve": "Plataforma de hospedagem e experiências de viagem.",
+    "linkedin_fundador": "https://www.linkedin.com/in/brianchesky"
   }}
 ]
 
-Retorne APENAS o JSON, sem explicações ou texto adicional:"""
-        
-        response = self.analyze_with_cerebras(prompt, max_tokens=800, temperature=0.1)
-        return response
-
-
-# Criar instância do agente CrewAI
-def create_deep_research_crewai_agent():
-    """Cria um agente CrewAI que usa o DeepResearchAgent internamente"""
+Agora retorne o JSON das startups encontradas:"""
     
-    # Usar o LLM padrão do CrewAI para o agente (pode ser OpenAI ou Perplexity)
-    agent = Agent(
-        role="Especialista em Pesquisa Profunda de VCs",
-        goal="Realizar pesquisa em múltiplas camadas para encontrar informações detalhadas sobre startups investidas",
-        backstory=(
-            "Você é um especialista em pesquisa profunda que utiliza técnicas avançadas de busca em múltiplas "
-            "camadas. Primeiro realiza uma pesquisa ampla, depois gera perguntas de aprofundamento inteligentes "
-            "e finalmente sintetiza todas as informações em relatórios estruturados e completos."
-        ),
-        verbose=True,
-        allow_delegation=False
-    )
-    
-    # Anexar o DeepResearchAgent como ferramenta customizada
-    agent._deep_research = DeepResearchAgent()
-    
-    return agent
+    response = analyze_with_cerebras(prompt, max_tokens=4000, temperature=0.2)
+    return response

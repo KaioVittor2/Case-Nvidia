@@ -15,6 +15,7 @@
   const toast = document.getElementById("toast");
   const btnExportCsv = document.getElementById("btnExportCsv");
   const btnPrint = document.getElementById("btnPrint");
+  const btnPesquisarProfundo = document.getElementById("btnPesquisarProfundo");
 
   const filterYearFrom = document.getElementById("filter_year_from");
   const filterYearTo = document.getElementById("filter_year_to");
@@ -39,7 +40,6 @@
 
   const detailsModal = document.getElementById("detailsModal");
   const closeDetails = document.getElementById("closeDetails");
-  const detailsContent = document.getElementById("detailsContent");
 
   // state
   let currentResults = [];
@@ -65,6 +65,16 @@
     await performSearch(vcList);
   });
 
+  // Event listener para pesquisa profunda
+  if (btnPesquisarProfundo) {
+    btnPesquisarProfundo.addEventListener("click", async () => {
+      const v = vcInput.value.trim();
+      if (!v) return showToast("Digite pelo menos um VC para pesquisa profunda.", "error");
+      const vcList = v.split(",").map(s => s.trim()).filter(Boolean);
+      await performDeepSearch(vcList);
+    });
+  }
+
   btnHistorico.addEventListener("click", toggleHistoryPanel);
   closeHistory && closeHistory.addEventListener("click", () => hidePanel(historyPanel));
 
@@ -81,7 +91,6 @@
     });
   });
 
-  // Filter events
   [filterYearFrom, filterYearTo, filterSector, filterMinValue, filterMaxValue].forEach(el => {
     el.addEventListener("input", debounce(applyFilters, 300));
   });
@@ -104,11 +113,9 @@
     updateSavedButtonsState();
   });
 
-  // Initial state
   showEmptyState(true);
   updateSelectedUI();
 
-  // Close modals on background click
   [compareModal, detailsModal].forEach(modal => {
     modal && modal.addEventListener('click', (e) => {
       if (e.target === modal) hideModal(modal);
@@ -168,11 +175,195 @@
     }
   }
 
+  async function performDeepSearch(vcList) {
+    showEmptyState(false);
+    showLoadingDeep(true);
+    
+    try {
+      const res = await fetch("/pesquisar-profundo", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({vc_list: vcList})
+      });
+      
+      const json = await res.json();
+      
+      if (!res.ok) {
+        showToast(json.erro || "Erro na pesquisa profunda", "error");
+        showLoadingDeep(false);
+        showEmptyState(true);
+        return;
+      }
+
+      const payload = json.resultado;
+      const metadados = json.metadados || {};
+      
+      let arr = Array.isArray(payload) ? payload : [payload];
+      currentResults = arr.map(normalizeStartup);
+      currentVCs = vcList;
+      
+      applyFilters();
+      showDeepResearchInfo(metadados);
+      
+      const msg = `✨ Pesquisa Profunda: ${currentResults.length} startups de ${metadados.total_fontes || 'várias'} fontes`;
+      showToast(msg, "success");
+      
+    } catch (err) {
+      console.error("Deep search error:", err);
+      showToast("Erro na pesquisa profunda. Tente novamente.", "error");
+      showEmptyState(true);
+    } finally {
+      showLoadingDeep(false);
+    }
+  }
+
+  function showLoadingDeep(show) {
+    let overlay = document.getElementById("__loading_deep_overlay");
+    
+    if (show) {
+      if (!overlay) {
+        overlay = document.createElement("div");
+        overlay.id = "__loading_deep_overlay";
+        overlay.style.cssText = `
+          position: fixed; inset: 0;
+          background: rgba(15, 98, 254, 0.05);
+          backdrop-filter: blur(8px);
+          z-index: 90;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        `;
+        
+        overlay.innerHTML = `
+          <div style="
+            background: white;
+            padding: 32px 40px;
+            border-radius: 16px;
+            box-shadow: 0 12px 32px rgba(0,0,0,0.15);
+            max-width: 400px;
+            text-align: center;
+          ">
+            <div style="font-size: 48px; margin-bottom: 16px;">🔍</div>
+            <h3 style="margin: 0 0 12px; color: #111827; font-size: 20px;">
+              Pesquisa Profunda em Andamento
+            </h3>
+            <p style="margin: 0 0 20px; color: #6b7280; font-size: 14px;">
+              Analisando múltiplas fontes para resultados mais precisos...
+            </p>
+            
+            <div style="
+              background: #f3f4f6;
+              border-radius: 8px;
+              height: 8px;
+              overflow: hidden;
+              margin-bottom: 12px;
+            ">
+              <div style="
+                background: linear-gradient(90deg, #0f62fe, #00bfa6);
+                height: 100%;
+                width: 0%;
+                animation: progressAnimation 60s ease-in-out forwards;
+              "></div>
+            </div>
+            
+            <div id="deepSearchStatus" style="
+              font-size: 13px;
+              color: #9ca3af;
+              font-weight: 600;
+            ">
+              Camada 1: Pesquisa inicial...
+            </div>
+          </div>
+          
+          <style>
+            @keyframes progressAnimation {
+              0% { width: 0%; }
+              30% { width: 40%; }
+              60% { width: 70%; }
+              90% { width: 95%; }
+              100% { width: 100%; }
+            }
+          </style>
+        `;
+        
+        document.body.appendChild(overlay);
+        simulateDeepSearchProgress();
+      }
+    } else {
+      if (overlay) overlay.remove();
+    }
+  }
+
+  function simulateDeepSearchProgress() {
+    const statusEl = document.getElementById("deepSearchStatus");
+    if (!statusEl) return;
+    
+    const steps = [
+      { time: 0, text: "📊 Camada 1: Pesquisa inicial..." },
+      { time: 15000, text: "🤔 Analisando fontes iniciais..." },
+      { time: 25000, text: "🔎 Gerando pergunta de aprofundamento..." },
+      { time: 30000, text: "📊 Camada 2: Pesquisa detalhada..." },
+      { time: 45000, text: "🧠 Sintetizando informações..." },
+      { time: 55000, text: "✨ Finalizando análise..." }
+    ];
+    
+    steps.forEach(step => {
+      setTimeout(() => {
+        if (statusEl) statusEl.textContent = step.text;
+      }, step.time);
+    });
+  }
+
+  function showDeepResearchInfo(metadados) {
+    const info = `
+      <div style="
+        background: linear-gradient(135deg, #f0f9ff, #e0f2fe);
+        border: 2px solid #0ea5e9;
+        border-radius: 12px;
+        padding: 20px;
+        margin: 20px 0;
+      ">
+        <h4 style="margin: 0 0 12px; color: #0369a1; display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 24px;">✨</span>
+          Pesquisa Profunda Concluída
+        </h4>
+        
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-top: 16px;">
+          <div style="background: white; padding: 12px; border-radius: 8px;">
+            <div style="font-size: 12px; color: #64748b; font-weight: 600;">FONTES CONSULTADAS</div>
+            <div style="font-size: 24px; color: #0369a1; font-weight: 700;">${metadados.total_fontes || '—'}</div>
+          </div>
+          
+          <div style="background: white; padding: 12px; border-radius: 8px;">
+            <div style="font-size: 12px; color: #64748b; font-weight: 600;">STARTUPS ENCONTRADAS</div>
+            <div style="font-size: 24px; color: #16a34a; font-weight: 700;">${metadados.total_startups || '—'}</div>
+          </div>
+          
+          <div style="background: white; padding: 12px; border-radius: 8px;">
+            <div style="font-size: 12px; color: #64748b; font-weight: 600;">VCS PESQUISADAS</div>
+            <div style="font-size: 24px; color: #7c3aed; font-weight: 700;">${metadados.vcs_pesquisadas?.length || '—'}</div>
+          </div>
+        </div>
+        
+        ${metadados.query_aprofundamento ? `
+          <div style="margin-top: 16px; padding: 12px; background: white; border-radius: 8px; border-left: 3px solid #0ea5e9;">
+            <div style="font-size: 12px; color: #64748b; font-weight: 600; margin-bottom: 4px;">APROFUNDAMENTO REALIZADO</div>
+            <div style="font-size: 13px; color: #334155;">${escapeHtml(metadados.query_aprofundamento)}</div>
+          </div>
+        ` : ''}
+      </div>
+    `;
+    
+    const container = document.getElementById('deepSearchInfoContainer');
+    if (container) {
+      container.innerHTML = info;
+    }
+  }
+
   function normalizeSearchResults(payload) {
     if (Array.isArray(payload)) return payload;
     if (payload && payload.result && Array.isArray(payload.result)) return payload.result;
     if (payload && typeof payload === "object") {
-      // Try to extract arrays from object properties
       const values = Object.values(payload);
       const arrayValues = values.filter(v => Array.isArray(v));
       if (arrayValues.length > 0) return arrayValues.flat();
@@ -215,7 +406,6 @@
     const maxVal = parseMaybeHumanNumber(filterMaxValue.value);
 
     filteredResults = currentResults.filter(s => {
-      // Year filters
       if (yFrom && s.ano_fundacao) {
         const year = Number(s.ano_fundacao);
         if (year && year < yFrom) return false;
@@ -225,10 +415,8 @@
         if (year && year > yTo) return false;
       }
       
-      // Sector filter
       if (sector && !s.setor.toLowerCase().includes(sector)) return false;
       
-      // Value filters
       const numericVal = parseMaybeHumanNumber(String(s.valor_investimento || ""));
       if (minVal !== null && numericVal !== null && numericVal < minVal) return false;
       if (maxVal !== null && numericVal !== null && numericVal > maxVal) return false;
@@ -269,7 +457,6 @@
     card.className = "startup-card";
     card.dataset.id = item.id;
 
-    // Create card structure
     card.innerHTML = `
       <div class="startup-top">
         <div class="logo-wrap">${getInitials(item.nome)}</div>
@@ -321,7 +508,6 @@
       </div>
     `;
 
-    // Add event listeners
     const selectCb = card.querySelector('.select-checkbox');
     const saveBtn = card.querySelector('.save-btn');
     const linkedinBtn = card.querySelector('.linkedin-btn');
@@ -386,7 +572,14 @@
   }
 
   function showDetailsModal(item) {
-    detailsContent.innerHTML = createDetailedView(item);
+    const content = document.getElementById('detailsContent') || document.createElement('div');
+    content.id = 'detailsContent';
+    content.innerHTML = createDetailedView(item);
+    
+    if (!detailsModal.querySelector('#detailsContent')) {
+      detailsModal.querySelector('.modal-content').appendChild(content);
+    }
+    
     showModal(detailsModal);
   }
 
@@ -475,7 +668,7 @@
   }
 
   function updateSavedButtonsState() {
-    document.querySelectorAll('.save-btn').forEach((btn, index) => {
+    document.querySelectorAll('.save-btn').forEach(btn => {
       const card = btn.closest('.startup-card');
       const itemId = card?.dataset.id;
       if (itemId && savedSet[itemId]) {
@@ -542,17 +735,25 @@
         return;
       }
 
-      historyList.innerHTML = json.map(item => `
-        <div class="history-item">
-          <div>
-            <div style="font-weight: 700; color: #374151;">${escapeHtml(item.vc_list)}</div>
-            <div style="font-size: 13px; color: var(--muted);">
-              ${Array.isArray(item.resultado) ? item.resultado.length : 0} startups encontradas
+      historyList.innerHTML = json.map(item => {
+        const tipo = item.tipo_pesquisa || 'normal';
+        const badge = tipo === 'profunda' ? '<span style="background: linear-gradient(135deg, #0f62fe, #00bfa6); color: white; padding: 2px 6px; border-radius: 8px; font-size: 10px; font-weight: 700; margin-left: 8px;">✨ DEEP</span>' : '';
+        
+        return `
+          <div class="history-item">
+            <div>
+              <div style="font-weight: 700; color: #374151;">
+                ${escapeHtml(item.vc_list)}
+                ${badge}
+              </div>
+              <div style="font-size: 13px; color: var(--muted);">
+                ${Array.isArray(item.resultado) ? item.resultado.length : 0} startups encontradas
+              </div>
             </div>
+            <button class="btn ghost" onclick="loadHistoryItem(${item.id})">Carregar</button>
           </div>
-          <button class="btn ghost" onclick="loadHistoryItem(${item.id})">Carregar</button>
-        </div>
-      `).join('');
+        `;
+      }).join('');
       
     } catch (err) {
       console.error("History loading error:", err);
@@ -560,7 +761,6 @@
     }
   }
 
-  // Make loadHistoryItem global for onclick
   window.loadHistoryItem = async (id) => {
     try {
       const res = await fetch("/historico");
@@ -608,7 +808,6 @@
     const ctx = sectorChart.getContext("2d");
     const canvas = sectorChart;
     
-    // Clear canvas
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     
     const entries = Object.entries(sectorCounts)
@@ -630,20 +829,15 @@
     const barHeight = Math.floor(chartHeight / entries.length * 0.7);
     const barGap = Math.floor(chartHeight / entries.length * 0.3);
     
-    const colors = [
-      '#0f62fe', '#00bfa6', '#8b5cf6', 
-      '#f59e0b', '#ef4444', '#10b981'
-    ];
+    const colors = ['#0f62fe', '#00bfa6', '#8b5cf6', '#f59e0b', '#ef4444', '#10b981'];
     
     entries.forEach(([label, value], index) => {
       const y = padding + index * (barHeight + barGap);
       const barWidth = Math.max(4, (value / maxValue) * (chartWidth * 0.65));
       
-      // Draw bar
       ctx.fillStyle = colors[index % colors.length];
       ctx.fillRect(padding, y, barWidth, barHeight);
       
-      // Draw label and value
       ctx.fillStyle = '#374151';
       ctx.font = 'bold 12px Inter';
       ctx.textAlign = 'left';
@@ -685,8 +879,6 @@
     showToast("CSV exportado com sucesso", "success");
   }
 
-  // --- Helper Functions ---
-
   function showLoading(show) {
     let overlay = document.getElementById("__loading_overlay");
     
@@ -695,8 +887,7 @@
         overlay = document.createElement("div");
         overlay.id = "__loading_overlay";
         overlay.style.cssText = `
-          position: fixed;
-          inset: 0;
+          position: fixed; inset: 0;
           background: rgba(255,255,255,0.8);
           backdrop-filter: blur(4px);
           z-index: 90;
@@ -761,7 +952,6 @@
 
   function formatInvestment(value) {
     if (!value || value === "Não informado") return "—";
-    
     if (typeof value === "number") return formatCurrency(value);
     
     const str = String(value);
@@ -853,16 +1043,13 @@
     };
   }
 
-  // Keyboard shortcuts
   document.addEventListener('keydown', (e) => {
-    // ESC to close modals
     if (e.key === 'Escape') {
       if (!compareModal.classList.contains('hidden')) hideModal(compareModal);
       if (!detailsModal.classList.contains('hidden')) hideModal(detailsModal);
       if (!historyPanel.classList.contains('hidden')) hidePanel(historyPanel);
     }
     
-    // Ctrl/Cmd + K to focus search
     if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
       e.preventDefault();
       vcInput.focus();
@@ -870,7 +1057,6 @@
     }
   });
 
-  // Print styles
   window.addEventListener('beforeprint', () => {
     document.querySelectorAll('.technical-data').forEach(el => {
       el.style.display = 'none';

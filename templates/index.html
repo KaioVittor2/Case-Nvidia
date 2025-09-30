@@ -32,6 +32,9 @@
         <div class="search-input-wrap">
           <input id="vc_input" name="vc_input" type="text" placeholder="Ex: Sequoia Capital, SoftBank, Kaszek" />
           <button id="btnPesquisar" class="btn primary" type="submit">Pesquisar</button>
+          <button id="btnPesquisarProfundo" class="btn primary" type="button" style="background: linear-gradient(135deg, #7c3aed, #2563eb);">
+            🔍 Pesquisa Profunda
+          </button>
         </div>
         <div class="suggestions" id="suggestions"></div>
         
@@ -161,6 +164,9 @@
 
   <!-- Toast -->
   <div id="toast" class="toast hidden"></div>
+
+  <!-- Deep Research Info Container (será preenchido dinamicamente) -->
+  <div id="deepSearchInfoContainer"></div>
 
   <script defer src="{{ url_for('static', filename='script.js') }}"></script>
 </body>
