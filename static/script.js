@@ -1,4 +1,4 @@
-// Front-end logic for "Descobrir Investimentos de VCs"
+// Enhanced front-end logic for "Descobrir Investimentos de VCs"
 (() => {
   // --- DOM elements
   const searchForm = document.getElementById("searchForm");
@@ -37,11 +37,15 @@
   const closeCompare = document.getElementById("closeCompare");
   const compareArea = document.getElementById("compareArea");
 
+  const detailsModal = document.getElementById("detailsModal");
+  const closeDetails = document.getElementById("closeDetails");
+  const detailsContent = document.getElementById("detailsContent");
+
   // state
-  let currentResults = [];    // array of startup objects
+  let currentResults = [];
   let filteredResults = [];
   let selectedIds = new Set();
-  let savedSet = loadSaved(); // map id->startup
+  let savedSet = loadSaved();
   let currentVCs = [];
 
   // suggestions
@@ -56,48 +60,62 @@
   searchForm.addEventListener("submit", async (ev) => {
     ev.preventDefault();
     const v = vcInput.value.trim();
-    if (!v) return showToast("Digite pelo menos um VC.");
+    if (!v) return showToast("Digite pelo menos um VC.", "error");
     const vcList = v.split(",").map(s => s.trim()).filter(Boolean);
     await performSearch(vcList);
   });
 
-  btnHistorico.addEventListener("click", showHistoryPanel);
-  closeHistory && closeHistory.addEventListener("click", () => historyPanel.classList.add("hidden"));
+  btnHistorico.addEventListener("click", toggleHistoryPanel);
+  closeHistory && closeHistory.addEventListener("click", () => hidePanel(historyPanel));
 
   btnExportCsv.addEventListener("click", () => {
-    if (!filteredResults.length) return showToast("Sem resultados para exportar.");
+    if (!filteredResults.length) return showToast("Sem resultados para exportar.", "error");
     downloadCSV(filteredResults);
   });
 
-  btnPrint.addEventListener("click", () => {
-    window.print();
+  btnPrint.addEventListener("click", () => window.print());
+
+  toggleRaw.addEventListener("change", () => {
+    document.querySelectorAll('.technical-data').forEach(el => {
+      el.classList.toggle('show', toggleRaw.checked);
+    });
   });
 
-  toggleRaw.addEventListener("change", () => renderResults(filteredResults));
+  // Filter events
+  [filterYearFrom, filterYearTo, filterSector, filterMinValue, filterMaxValue].forEach(el => {
+    el.addEventListener("input", debounce(applyFilters, 300));
+  });
 
-  filterYearFrom.addEventListener("change", applyFilters);
-  filterYearTo.addEventListener("change", applyFilters);
-  filterSector.addEventListener("input", applyFilters);
-  filterMinValue.addEventListener("input", applyFilters);
-  filterMaxValue.addEventListener("input", applyFilters);
   btnClearFilters.addEventListener("click", () => {
     filterYearFrom.value = filterYearTo.value = filterSector.value = filterMinValue.value = filterMaxValue.value = "";
     applyFilters();
+    showToast("Filtros limpos", "success");
   });
 
   btnCompare.addEventListener("click", openCompareModal);
-  closeCompare && closeCompare.addEventListener("click", () => compareModal.classList.add("hidden"));
+  closeCompare && closeCompare.addEventListener("click", () => hideModal(compareModal));
+  closeDetails && closeDetails.addEventListener("click", () => hideModal(detailsModal));
+
   btnSaveSelected.addEventListener("click", saveSelected);
   btnClearSaved.addEventListener("click", () => {
     localStorage.removeItem("savedStartups");
     savedSet = {};
-    showToast("Favoritos limpos.");
+    showToast("Favoritos limpos.", "success");
+    updateSavedButtonsState();
   });
 
-  // initial empty
+  // Initial state
   showEmptyState(true);
+  updateSelectedUI();
 
-  // ----- functions -----
+  // Close modals on background click
+  [compareModal, detailsModal].forEach(modal => {
+    modal && modal.addEventListener('click', (e) => {
+      if (e.target === modal) hideModal(modal);
+    });
+  });
+
+  // ----- Functions -----
   function buildSuggestions() {
     suggestionsEl.innerHTML = "";
     sampleSuggestions.forEach(s => {
@@ -107,6 +125,7 @@
       b.textContent = s;
       b.addEventListener("click", () => {
         vcInput.value = s;
+        vcInput.focus();
       });
       suggestionsEl.appendChild(b);
     });
@@ -115,65 +134,77 @@
   async function performSearch(vcList) {
     showEmptyState(false);
     showLoading(true);
+    
     try {
-      // call backend /pesquisar
       const res = await fetch("/pesquisar", {
         method: "POST",
         headers: {"Content-Type":"application/json"},
         body: JSON.stringify({vc_list: vcList})
       });
+      
       const json = await res.json();
+      
       if (!res.ok) {
-        showToast(json.erro || "Erro na busca");
-        showLoading(false);
+        showToast(json.erro || "Erro na busca", "error");
+        showEmptyState(true);
         return;
       }
-      const payload = json.resultado;
-      // The agent returns possibly a list or an object. Normalize.
-      let arr = [];
-      if (Array.isArray(payload)) arr = payload;
-      else if (payload && payload.result && Array.isArray(payload.result)) arr = payload.result;
-      else if (payload && typeof payload === "object" && !Array.isArray(payload)) {
-        // If it's a mapping or an object with keys that represent startups, try to extract
-        // but safest is to wrap object in array
-        arr = Array.isArray(payload) ? payload : [payload];
-      } else {
-        arr = [];
-      }
 
-      // Normalize expected keys (safe access)
+      const payload = json.resultado;
+      let arr = normalizeSearchResults(payload);
+
       currentResults = arr.map(normalizeStartup);
       currentVCs = vcList;
-      // apply filters & render
+      
       applyFilters();
-
-      // success message
-      showToast(`Resultados carregados: ${currentResults.length}`);
+      showToast(`${currentResults.length} startups encontradas!`, "success");
+      
     } catch (err) {
-      console.error(err);
-      showToast("Erro ao buscar. Verifique o servidor.");
+      console.error("Search error:", err);
+      showToast("Erro de conexão. Tente novamente.", "error");
+      showEmptyState(true);
     } finally {
       showLoading(false);
     }
   }
 
+  function normalizeSearchResults(payload) {
+    if (Array.isArray(payload)) return payload;
+    if (payload && payload.result && Array.isArray(payload.result)) return payload.result;
+    if (payload && typeof payload === "object") {
+      // Try to extract arrays from object properties
+      const values = Object.values(payload);
+      const arrayValues = values.filter(v => Array.isArray(v));
+      if (arrayValues.length > 0) return arrayValues.flat();
+      return [payload];
+    }
+    return [];
+  }
+
   function normalizeStartup(raw) {
-    // raw may already match expected keys; try a best-effort normalization.
     const r = raw || {};
+    const id = r.id || generateId(r.nome || r.name || 'unknown');
+    
     return {
-      id: r.id || r.nome?.toString().slice(0,20) + "-" + Math.random().toString(36).slice(2,7),
+      id,
       nome: r.nome || r.name || r.company || "Nome não informado",
       site: r.site || r.url || r.website || "",
-      setor: r.setor || r.sector || r.industry || "—",
-      ano_fundacao: r.ano_fundacao || r.year || r.founded_year || null,
-      valor_investimento: r.valor_investimento || r.investment_value || r.valor || "—",
-      rodada: r.rodada || r.round || "—",
-      data_investimento: r.data_investimento || r.investment_date || "—",
-      vc_investidor: r.vc_investidor || r.vc || "—",
-      descricao_breve: r.descricao_breve || r.description || r.bio || "",
+      setor: r.setor || r.sector || r.industry || "Não informado",
+      ano_fundacao: r.ano_fundacao || r.year || r.founded_year || r.founded || null,
+      valor_investimento: r.valor_investimento || r.investment_value || r.valor || r.funding || "Não informado",
+      rodada: r.rodada || r.round || r.funding_round || "Não informada",
+      data_investimento: r.data_investimento || r.investment_date || r.date || "Não informada",
+      vc_investidor: r.vc_investidor || r.vc || r.investor || "Não informado",
+      descricao_breve: r.descricao_breve || r.description || r.bio || r.summary || "",
       linkedin_fundador: r.linkedin_fundador || r.linkedin || r.founder_linkedin || "",
       raw: r
     };
+  }
+
+  function generateId(name) {
+    const cleanName = String(name).slice(0, 20).replace(/[^a-zA-Z0-9]/g, '');
+    const randomSuffix = Math.random().toString(36).slice(2, 8);
+    return `${cleanName}-${randomSuffix}`;
   }
 
   function applyFilters() {
@@ -184,136 +215,257 @@
     const maxVal = parseMaybeHumanNumber(filterMaxValue.value);
 
     filteredResults = currentResults.filter(s => {
-      if (yFrom && s.ano_fundacao && Number(s.ano_fundacao) < yFrom) return false;
-      if (yTo && s.ano_fundacao && Number(s.ano_fundacao) > yTo) return false;
-      if (sector && s.setor && !s.setor.toLowerCase().includes(sector)) return false;
+      // Year filters
+      if (yFrom && s.ano_fundacao) {
+        const year = Number(s.ano_fundacao);
+        if (year && year < yFrom) return false;
+      }
+      if (yTo && s.ano_fundacao) {
+        const year = Number(s.ano_fundacao);
+        if (year && year > yTo) return false;
+      }
+      
+      // Sector filter
+      if (sector && !s.setor.toLowerCase().includes(sector)) return false;
+      
+      // Value filters
       const numericVal = parseMaybeHumanNumber(String(s.valor_investimento || ""));
       if (minVal !== null && numericVal !== null && numericVal < minVal) return false;
       if (maxVal !== null && numericVal !== null && numericVal > maxVal) return false;
+      
       return true;
     });
+
     renderResults(filteredResults);
   }
 
   function renderResults(list) {
     resultsEl.innerHTML = "";
+    
     if (!list || !list.length) {
       showEmptyState(true);
       updateStats([]);
       drawSectorChart({});
       return;
     }
+
     showEmptyState(false);
-    list.forEach(item => {
-      const c = createCard(item);
-      resultsEl.appendChild(c);
+    
+    list.forEach((item, index) => {
+      const card = createCard(item);
+      card.style.animationDelay = `${index * 50}ms`;
+      card.classList.add('fade-in');
+      resultsEl.appendChild(card);
     });
+
     updateStats(list);
     drawSectorChart(buildSectorCounts(list));
+    updateSelectedUI();
+    updateSavedButtonsState();
   }
 
   function createCard(item) {
-    const el = document.createElement("article");
-    el.className = "startup-card";
-    el.dataset.id = item.id;
+    const card = document.createElement("article");
+    card.className = "startup-card";
+    card.dataset.id = item.id;
 
-    // top
-    const top = document.createElement("div");
-    top.className = "startup-top";
+    // Create card structure
+    card.innerHTML = `
+      <div class="startup-top">
+        <div class="logo-wrap">${getInitials(item.nome)}</div>
+        <div class="startup-body">
+          <h3 class="startup-title">${escapeHtml(item.nome)}</h3>
+          <p class="startup-desc">${escapeHtml(item.descricao_breve || 'Sem descrição disponível.')}</p>
+          <div class="tags">
+            ${createTags(item)}
+          </div>
+        </div>
+      </div>
+      
+      <div class="meta">
+        <div class="meta-row">
+          <span class="meta-label">Valor do Investimento</span>
+          <span class="meta-value investment-value">${formatInvestment(item.valor_investimento)}</span>
+        </div>
+        <div class="meta-row">
+          <span class="meta-label">Rodada</span>
+          <span class="meta-value">${escapeHtml(item.rodada)}</span>
+        </div>
+        <div class="meta-row">
+          <span class="meta-label">Fundação</span>
+          <span class="meta-value">${escapeHtml(item.ano_fundacao || '—')}</span>
+        </div>
+        <div class="meta-row">
+          <span class="meta-label">Investimento</span>
+          <span class="meta-value">${escapeHtml(item.data_investimento)}</span>
+        </div>
+        <div class="meta-row">
+          <span class="meta-label">VC Investidor</span>
+          <span class="meta-value">${escapeHtml(item.vc_investidor)}</span>
+        </div>
+      </div>
 
-    const logoWrap = document.createElement("div");
-    logoWrap.className = "logo-wrap";
-    // try logo from raw or site favicon (not fetched). Use initials fallback.
-    const initials = (item.nome || "—").split(" ").slice(0,2).map(t => t[0]?.toUpperCase()||"").join("");
-    logoWrap.textContent = initials;
+      <div class="card-actions">
+        <div class="left-actions">
+          <input type="checkbox" class="select-checkbox" ${selectedIds.has(item.id) ? 'checked' : ''}>
+          <button class="small-btn save-btn ${savedSet[item.id] ? 'saved' : ''}">${savedSet[item.id] ? 'Salvo' : 'Salvar'}</button>
+        </div>
+        <div class="right-actions">
+          <button class="small-btn linkedin-btn">LinkedIn</button>
+          <button class="small-btn details-btn primary">Ver detalhes</button>
+        </div>
+      </div>
 
-    const body = document.createElement("div");
-    body.className = "startup-body";
-    const title = document.createElement("div");
-    title.className = "startup-title";
-    title.textContent = item.nome;
+      <div class="technical-data ${toggleRaw.checked ? 'show' : ''}">
+        <pre>${JSON.stringify(item.raw, null, 2)}</pre>
+      </div>
+    `;
 
-    const desc = document.createElement("div");
-    desc.className = "startup-desc";
-    desc.textContent = item.descricao_breve || "Sem descrição disponível.";
+    // Add event listeners
+    const selectCb = card.querySelector('.select-checkbox');
+    const saveBtn = card.querySelector('.save-btn');
+    const linkedinBtn = card.querySelector('.linkedin-btn');
+    const detailsBtn = card.querySelector('.details-btn');
 
-    const tags = document.createElement("div");
-    tags.className = "tags";
-    if (item.setor) {
-      const t = document.createElement("span"); t.className = "tag"; t.textContent = item.setor; tags.appendChild(t);
-    }
-    if (item.rodada) {
-      const t = document.createElement("span"); t.className = "tag"; t.textContent = item.rodada; tags.appendChild(t);
-    }
-
-    const meta = document.createElement("div");
-    meta.className = "meta";
-    const val = document.createElement("span"); val.textContent = formatInvestment(item.valor_investimento);
-    const founded = document.createElement("span"); founded.textContent = item.ano_fundacao ? `Fundação: ${item.ano_fundacao}` : "";
-    const dateInv = document.createElement("span"); dateInv.textContent = item.data_investimento ? `Investido: ${item.data_investimento}` : "";
-    meta.append(val, founded, dateInv);
-
-    body.append(title, desc, tags, meta);
-
-    top.append(logoWrap, body);
-
-    // actions
-    const actions = document.createElement("div");
-    actions.className = "card-actions";
-
-    const leftActions = document.createElement("div");
-    leftActions.style.display="flex"; leftActions.style.gap="8px";
-
-    const selectCb = document.createElement("input");
-    selectCb.type = "checkbox";
-    selectCb.addEventListener("change", (e)=>{
-      if (e.target.checked) selectedIds.add(item.id); else selectedIds.delete(item.id);
+    selectCb.addEventListener('change', (e) => {
+      if (e.target.checked) {
+        selectedIds.add(item.id);
+      } else {
+        selectedIds.delete(item.id);
+      }
       updateSelectedUI();
     });
 
-    const saveBtn = document.createElement("button");
-    saveBtn.className = "small-btn";
-    saveBtn.textContent = savedSet[item.id] ? "Salvo" : "Salvar";
-    saveBtn.addEventListener("click", () => {
+    saveBtn.addEventListener('click', () => toggleSaveStartup(item, saveBtn));
+    linkedinBtn.addEventListener('click', () => openLinkedIn(item));
+    detailsBtn.addEventListener('click', () => showDetailsModal(item));
+
+    return card;
+  }
+
+  function createTags(item) {
+    const tags = [];
+    if (item.setor && item.setor !== 'Não informado') {
+      tags.push(`<span class="tag">${escapeHtml(item.setor)}</span>`);
+    }
+    if (item.rodada && item.rodada !== 'Não informada') {
+      tags.push(`<span class="tag">${escapeHtml(item.rodada)}</span>`);
+    }
+    return tags.join('');
+  }
+
+  function getInitials(name) {
+    if (!name) return "—";
+    return name.split(" ")
+      .slice(0, 2)
+      .map(word => word[0]?.toUpperCase() || "")
+      .join("");
+  }
+
+  function toggleSaveStartup(item, button) {
+    if (savedSet[item.id]) {
+      delete savedSet[item.id];
+      button.textContent = "Salvar";
+      button.classList.remove('saved');
+      showToast("Removido dos favoritos", "success");
+    } else {
       savedSet[item.id] = item;
-      persistSaved();
-      saveBtn.textContent = "Salvo";
-      showToast("Startup salva em favoritos (local).");
-    });
+      button.textContent = "Salvo";
+      button.classList.add('saved');
+      showToast("Salvo nos favoritos", "success");
+    }
+    persistSaved();
+  }
 
-    leftActions.append(selectCb, saveBtn);
+  function openLinkedIn(item) {
+    if (item.linkedin_fundador) {
+      window.open(item.linkedin_fundador, "_blank");
+    } else {
+      showToast("Link do LinkedIn não disponível", "error");
+    }
+  }
 
-    const rightActions = document.createElement("div");
-    rightActions.style.display="flex"; rightActions.style.gap="8px";
+  function showDetailsModal(item) {
+    detailsContent.innerHTML = createDetailedView(item);
+    showModal(detailsModal);
+  }
 
-    const linkBtn = document.createElement("button");
-    linkBtn.className = "small-btn";
-    linkBtn.textContent = "LinkedIn";
-    linkBtn.addEventListener("click", () => {
-      if (item.linkedin_fundador) window.open(item.linkedin_fundador, "_blank");
-      else showToast("Link do LinkedIn não disponível.");
-    });
+  function createDetailedView(item) {
+    return `
+      <div class="details-header">
+        <div style="display: flex; align-items: center; gap: 16px; margin-bottom: 16px;">
+          <div class="logo-wrap" style="width: 64px; height: 64px; font-size: 24px;">
+            ${getInitials(item.nome)}
+          </div>
+          <div>
+            <h2 style="margin: 0; font-size: 28px; font-weight: 700; color: #111827;">
+              ${escapeHtml(item.nome)}
+            </h2>
+            <p style="margin: 8px 0 0; color: var(--muted); font-size: 16px;">
+              ${escapeHtml(item.descricao_breve || 'Sem descrição disponível.')}
+            </p>
+          </div>
+        </div>
+        <div class="tags">
+          ${createTags(item)}
+        </div>
+      </div>
 
-    const detailsBtn = document.createElement("button");
-    detailsBtn.className = "small-btn";
-    detailsBtn.textContent = "Ver";
-    detailsBtn.addEventListener("click", () => {
-      // toggle raw JSON or simple modal with full data
-      showDetailsModal(item);
-    });
+      <div class="details-content">
+        <div class="details-section">
+          <h4>📊 Informações do Investimento</h4>
+          <div class="details-grid">
+            <div class="detail-item">
+              <div class="detail-label">Valor do Investimento</div>
+              <div class="detail-value success">${formatInvestment(item.valor_investimento)}</div>
+            </div>
+            <div class="detail-item">
+              <div class="detail-label">Rodada</div>
+              <div class="detail-value">${escapeHtml(item.rodada)}</div>
+            </div>
+            <div class="detail-item">
+              <div class="detail-label">Data do Investimento</div>
+              <div class="detail-value">${escapeHtml(item.data_investimento)}</div>
+            </div>
+            <div class="detail-item">
+              <div class="detail-label">VC Investidor</div>
+              <div class="detail-value primary">${escapeHtml(item.vc_investidor)}</div>
+            </div>
+          </div>
+        </div>
 
-    rightActions.append(linkBtn, detailsBtn);
+        <div class="details-section">
+          <h4>🏢 Informações da Empresa</h4>
+          <div class="details-grid">
+            <div class="detail-item">
+              <div class="detail-label">Setor</div>
+              <div class="detail-value">${escapeHtml(item.setor)}</div>
+            </div>
+            <div class="detail-item">
+              <div class="detail-label">Ano de Fundação</div>
+              <div class="detail-value">${escapeHtml(item.ano_fundacao || '—')}</div>
+            </div>
+            <div class="detail-item">
+              <div class="detail-label">Website</div>
+              <div class="detail-value">
+                ${item.site ? `<a href="${escapeHtml(item.site)}" target="_blank">${escapeHtml(item.site)}</a>` : '—'}
+              </div>
+            </div>
+            <div class="detail-item">
+              <div class="detail-label">LinkedIn do Fundador</div>
+              <div class="detail-value">
+                ${item.linkedin_fundador ? `<a href="${escapeHtml(item.linkedin_fundador)}" target="_blank">Ver perfil</a>` : '—'}
+              </div>
+            </div>
+          </div>
+        </div>
 
-    actions.append(leftActions, rightActions);
-
-    // optionally show raw
-    const rawPre = document.createElement("pre");
-    rawPre.style.maxHeight="200px"; rawPre.style.overflow="auto"; rawPre.style.display = toggleRaw.checked ? "block" : "none";
-    rawPre.textContent = JSON.stringify(item.raw, null, 2);
-
-    el.append(top, actions, rawPre);
-
-    return el;
+        <div class="details-section">
+          <h4>🔧 Dados Técnicos</h4>
+          <pre style="background: #f8fafc; padding: 16px; border-radius: 8px; font-size: 12px; overflow: auto; max-height: 300px;">${JSON.stringify(item.raw, null, 2)}</pre>
+        </div>
+      </div>
+    `;
   }
 
   function updateSelectedUI() {
@@ -322,195 +474,253 @@
     btnSaveSelected.disabled = selectedIds.size === 0;
   }
 
-  function openCompareModal(){
-    compareArea.innerHTML = "";
-    const items = currentResults.filter(s => selectedIds.has(s.id));
-    if (!items.length) { showToast("Selecione ao menos 2 startups."); return; }
-    items.forEach(it => {
-      const c = document.createElement("div"); c.className = "compare-card";
-      c.innerHTML = `
-        <h4 style="margin:6px 0">${escapeHtml(it.nome)}</h4>
-        <p style="color:${'var(--muted)'}">${escapeHtml(it.descricao_breve || '')}</p>
-        <ul style="margin-top:8px">
-          <li><strong>Setor:</strong> ${escapeHtml(it.setor || '—')}</li>
-          <li><strong>Fundação:</strong> ${escapeHtml(it.ano_fundacao || '—')}</li>
-          <li><strong>Rodada:</strong> ${escapeHtml(it.rodada || '—')}</li>
-          <li><strong>Valor:</strong> ${escapeHtml(formatInvestment(it.valor_investimento))}</li>
-          <li><strong>LinkedIn:</strong> ${it.linkedin_fundador ? `<a target="_blank" href="${escapeHtml(it.linkedin_fundador)}">perfil</a>` : '—'}</li>
-        </ul>
-      `;
-      compareArea.appendChild(c);
+  function updateSavedButtonsState() {
+    document.querySelectorAll('.save-btn').forEach((btn, index) => {
+      const card = btn.closest('.startup-card');
+      const itemId = card?.dataset.id;
+      if (itemId && savedSet[itemId]) {
+        btn.textContent = 'Salvo';
+        btn.classList.add('saved');
+      } else {
+        btn.textContent = 'Salvar';
+        btn.classList.remove('saved');
+      }
     });
-    compareModal.classList.remove("hidden");
+  }
+
+  function openCompareModal() {
+    const items = currentResults.filter(s => selectedIds.has(s.id));
+    if (items.length < 2) {
+      showToast("Selecione ao menos 2 startups para comparar", "error");
+      return;
+    }
+
+    compareArea.innerHTML = items.map(item => `
+      <div class="compare-card">
+        <h4>${escapeHtml(item.nome)}</h4>
+        <p style="color: var(--muted); margin-bottom: 16px;">${escapeHtml(item.descricao_breve || '')}</p>
+        <ul>
+          <li><strong>Setor:</strong> ${escapeHtml(item.setor)}</li>
+          <li><strong>Fundação:</strong> ${escapeHtml(item.ano_fundacao || '—')}</li>
+          <li><strong>Rodada:</strong> ${escapeHtml(item.rodada)}</li>
+          <li><strong>Valor:</strong> ${escapeHtml(formatInvestment(item.valor_investimento))}</li>
+          <li><strong>VC:</strong> ${escapeHtml(item.vc_investidor)}</li>
+          <li><strong>LinkedIn:</strong> ${item.linkedin_fundador ? `<a target="_blank" href="${escapeHtml(item.linkedin_fundador)}">Ver perfil</a>` : '—'}</li>
+        </ul>
+      </div>
+    `).join('');
+
+    showModal(compareModal);
   }
 
   function saveSelected() {
     const items = currentResults.filter(s => selectedIds.has(s.id));
-    items.forEach(it => savedSet[it.id] = it);
+    items.forEach(item => savedSet[item.id] = item);
     persistSaved();
-    showToast(`${items.length} startup(s) salvas (local).`);
+    showToast(`${items.length} startup(s) salvas nos favoritos`, "success");
+    updateSavedButtonsState();
   }
 
-  function saveAndPersistOne(it) {
-    savedSet[it.id] = it;
-    persistSaved();
-  }
-
-  function persistSaved() {
-    localStorage.setItem("savedStartups", JSON.stringify(savedSet));
-  }
-
-  function loadSaved() {
-    try {
-      return JSON.parse(localStorage.getItem("savedStartups") || "{}") || {};
-    } catch (e) { return {}; }
-  }
-
-  function showDetailsModal(item) {
-    // little modal using window.open could be simple; here we reuse compare modal for detail
-    compareArea.innerHTML = "";
-    const c = document.createElement("div"); c.className = "compare-card";
-    c.innerHTML = `
-      <h3>${escapeHtml(item.nome)}</h3>
-      <p>${escapeHtml(item.descricao_breve || '')}</p>
-      <p><strong>Setor:</strong> ${escapeHtml(item.setor || '—')}</p>
-      <p><strong>Fundação:</strong> ${escapeHtml(item.ano_fundacao || '—')}</p>
-      <p><strong>Rodada:</strong> ${escapeHtml(item.rodada || '—')}</p>
-      <p><strong>Valor:</strong> ${escapeHtml(formatInvestment(item.valor_investimento))}</p>
-      <p><strong>LinkedIn:</strong> ${item.linkedin_fundador ? `<a target="_blank" href="${escapeHtml(item.linkedin_fundador)}">perfil</a>` : '—'}</p>
-      <pre style="max-height:300px;overflow:auto;margin-top:8px">${JSON.stringify(item.raw, null, 2)}</pre>
-    `;
-    compareArea.appendChild(c);
-    compareModal.classList.remove("hidden");
-  }
-
-  function showHistoryPanel(){
-    historyPanel.classList.toggle("hidden");
-    loadHistory();
-  }
-
-  async function loadHistory(){
-    historyList.innerHTML = "<div style='padding:12px;color:var(--muted)'>Carregando histórico...</div>";
-    try {
-      const res = await fetch("/historico");
-      const json = await res.json();
-      if (!Array.isArray(json) || json.length === 0) {
-        historyList.innerHTML = "<div style='padding:12px;color:var(--muted)'>Nenhuma pesquisa encontrada.</div>";
-        return;
-      }
-      historyList.innerHTML = "";
-      json.forEach(item => {
-        const el = document.createElement("div"); el.className = "history-item";
-        const left = document.createElement("div");
-        left.innerHTML = `<div style="font-weight:700">${escapeHtml(item.vc_list)}</div><div style="font-size:13px;color:var(--muted)">${(item.resultado && item.resultado.length) ? item.resultado.length + " startups" : "—"}</div>`;
-        const right = document.createElement("div");
-        const btnLoad = document.createElement("button");
-        btnLoad.className = "btn";
-        btnLoad.textContent = "Abrir";
-        btnLoad.addEventListener("click", () => {
-          // load into currentResults and render
-          const arr = Array.isArray(item.resultado) ? item.resultado : [item.resultado];
-          currentResults = arr.map(normalizeStartup);
-          applyFilters();
-          showToast("Histórico carregado.");
-        });
-        right.appendChild(btnLoad);
-        el.append(left,right);
-        historyList.appendChild(el);
-      });
-    } catch (err) {
-      historyList.innerHTML = "<div style='padding:12px;color:var(--muted)'>Erro ao buscar histórico.</div>";
+  function toggleHistoryPanel() {
+    if (historyPanel.classList.contains('hidden')) {
+      showPanel(historyPanel);
+      loadHistory();
+    } else {
+      hidePanel(historyPanel);
     }
   }
 
+  async function loadHistory() {
+    historyList.innerHTML = "<div style='padding: 20px; color: var(--muted); text-align: center;'>Carregando histórico...</div>";
+    
+    try {
+      const res = await fetch("/historico");
+      const json = await res.json();
+      
+      if (!Array.isArray(json) || json.length === 0) {
+        historyList.innerHTML = "<div style='padding: 20px; color: var(--muted); text-align: center;'>Nenhuma pesquisa no histórico.</div>";
+        return;
+      }
+
+      historyList.innerHTML = json.map(item => `
+        <div class="history-item">
+          <div>
+            <div style="font-weight: 700; color: #374151;">${escapeHtml(item.vc_list)}</div>
+            <div style="font-size: 13px; color: var(--muted);">
+              ${Array.isArray(item.resultado) ? item.resultado.length : 0} startups encontradas
+            </div>
+          </div>
+          <button class="btn ghost" onclick="loadHistoryItem(${item.id})">Carregar</button>
+        </div>
+      `).join('');
+      
+    } catch (err) {
+      console.error("History loading error:", err);
+      historyList.innerHTML = "<div style='padding: 20px; color: var(--muted); text-align: center;'>Erro ao carregar histórico.</div>";
+    }
+  }
+
+  // Make loadHistoryItem global for onclick
+  window.loadHistoryItem = async (id) => {
+    try {
+      const res = await fetch("/historico");
+      const json = await res.json();
+      const item = json.find(h => h.id === id);
+      
+      if (!item) return;
+      
+      const arr = Array.isArray(item.resultado) ? item.resultado : [item.resultado];
+      currentResults = arr.map(normalizeStartup);
+      currentVCs = item.vc_list.split(',').map(s => s.trim());
+      
+      applyFilters();
+      hidePanel(historyPanel);
+      showToast("Histórico carregado com sucesso", "success");
+      
+    } catch (err) {
+      console.error("Error loading history item:", err);
+      showToast("Erro ao carregar item do histórico", "error");
+    }
+  };
+
   function updateStats(list) {
-    statTotalStartups.textContent = list.length || 0;
-    statTotalVCs.textContent = (currentVCs && currentVCs.length) ? currentVCs.length : "—";
-    // total invested
+    statTotalStartups.textContent = list.length;
+    statTotalVCs.textContent = currentVCs.length || "—";
+    
     const total = list.reduce((acc, s) => {
       const n = parseMaybeHumanNumber(String(s.valor_investimento || 0));
       return acc + (n || 0);
     }, 0);
+    
     statTotalValue.textContent = total ? formatCurrency(total) : "—";
   }
 
   function buildSectorCounts(list) {
-    const map = {};
+    const counts = {};
     list.forEach(s => {
-      const key = (s.setor || "—").toString();
-      map[key] = (map[key] || 0) + 1;
+      const sector = s.setor === 'Não informado' ? 'Outros' : s.setor;
+      counts[sector] = (counts[sector] || 0) + 1;
     });
-    return map;
+    return counts;
   }
 
-  function drawSectorChart(map) {
+  function drawSectorChart(sectorCounts) {
     const ctx = sectorChart.getContext("2d");
-    ctx.clearRect(0,0,sectorChart.width,sectorChart.height);
-    const entries = Object.entries(map).sort((a,b)=>b[1]-a[1]).slice(0,6);
+    const canvas = sectorChart;
+    
+    // Clear canvas
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    const entries = Object.entries(sectorCounts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6);
+      
     if (!entries.length) {
-      ctx.fillStyle = "#9AA2B1";
-      ctx.font = "14px sans-serif";
-      ctx.fillText("Sem dados para gráfico", 10, 24);
+      ctx.fillStyle = "var(--muted)";
+      ctx.font = "14px Inter";
+      ctx.textAlign = "center";
+      ctx.fillText("Sem dados para exibir", canvas.width / 2, canvas.height / 2);
       return;
     }
-    // simple bar chart
+    
     const padding = 20;
-    const w = sectorChart.width - padding*2;
-    const h = sectorChart.height - padding*2;
-    const max = Math.max(...entries.map(e=>e[1]));
-    const barH = Math.floor(h / entries.length * 0.7);
-    entries.forEach((e,i) => {
-      const [label, value] = e;
-      const y = padding + i * (barH + 10);
-      const barW = Math.max(2, (value / max) * (w*0.7));
-      ctx.fillStyle = "#0f62fe";
-      ctx.fillRect(padding, y, barW, barH);
-      ctx.fillStyle = "#111827";
-      ctx.font = "12px sans-serif";
-      ctx.fillText(`${label} (${value})`, padding + barW + 8, y + barH/1.6);
+    const chartWidth = canvas.width - padding * 2;
+    const chartHeight = canvas.height - padding * 2;
+    const maxValue = Math.max(...entries.map(e => e[1]));
+    const barHeight = Math.floor(chartHeight / entries.length * 0.7);
+    const barGap = Math.floor(chartHeight / entries.length * 0.3);
+    
+    const colors = [
+      '#0f62fe', '#00bfa6', '#8b5cf6', 
+      '#f59e0b', '#ef4444', '#10b981'
+    ];
+    
+    entries.forEach(([label, value], index) => {
+      const y = padding + index * (barHeight + barGap);
+      const barWidth = Math.max(4, (value / maxValue) * (chartWidth * 0.65));
+      
+      // Draw bar
+      ctx.fillStyle = colors[index % colors.length];
+      ctx.fillRect(padding, y, barWidth, barHeight);
+      
+      // Draw label and value
+      ctx.fillStyle = '#374151';
+      ctx.font = 'bold 12px Inter';
+      ctx.textAlign = 'left';
+      ctx.fillText(`${label} (${value})`, padding + barWidth + 10, y + barHeight / 1.5);
     });
   }
 
   function buildCSV(rows) {
-    const header = ["nome","site","setor","ano_fundacao","valor_investimento","rodada","data_investimento","vc_investidor","descricao_breve","linkedin_fundador"];
-    const lines = [];
-    lines.push(header.join(","));
-    rows.forEach(r => {
-      const arr = header.map(h => {
-        const v = r[h] ?? (r[h] === 0 ? "0" : "");
-        // escape quotes
-        return `"${String(v).replace(/"/g,'""')}"`;
+    const header = [
+      "nome", "site", "setor", "ano_fundacao", "valor_investimento", 
+      "rodada", "data_investimento", "vc_investidor", "descricao_breve", "linkedin_fundador"
+    ];
+    
+    const lines = [header.join(",")];
+    
+    rows.forEach(row => {
+      const values = header.map(key => {
+        const value = row[key] ?? "";
+        return `"${String(value).replace(/"/g, '""')}"`;
       });
-      lines.push(arr.join(","));
+      lines.push(values.join(","));
     });
+    
     return lines.join("\n");
   }
 
   function downloadCSV(rows) {
     const csv = buildCSV(rows);
-    const blob = new Blob([csv], {type: "text/csv;charset=utf-8;"});
+    const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `startups_export_${new Date().toISOString().slice(0,10)}.csv`;
-    a.click();
+    const link = document.createElement("a");
+    const date = new Date().toISOString().slice(0, 10);
+    
+    link.href = url;
+    link.download = `startups_export_${date}.csv`;
+    link.click();
+    
     URL.revokeObjectURL(url);
-    showToast("CSV gerado para download.");
+    showToast("CSV exportado com sucesso", "success");
   }
 
-  // --- helpers
-  function showLoading(yes) {
-    if (yes) {
-      // simple overlay
-      if (!document.getElementById("__loading_overlay")) {
-        const o = document.createElement("div"); o.id="__loading_overlay";
-        o.style.position="fixed"; o.style.inset="0"; o.style.background="rgba(255,255,255,0.6)";
-        o.style.zIndex=90; o.innerHTML = `<div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-weight:700">Carregando...</div>`;
-        document.body.appendChild(o);
+  // --- Helper Functions ---
+
+  function showLoading(show) {
+    let overlay = document.getElementById("__loading_overlay");
+    
+    if (show) {
+      if (!overlay) {
+        overlay = document.createElement("div");
+        overlay.id = "__loading_overlay";
+        overlay.style.cssText = `
+          position: fixed;
+          inset: 0;
+          background: rgba(255,255,255,0.8);
+          backdrop-filter: blur(4px);
+          z-index: 90;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        `;
+        overlay.innerHTML = `
+          <div style="
+            background: white;
+            padding: 24px 32px;
+            border-radius: 12px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+            font-weight: 700;
+            font-size: 16px;
+            color: #374151;
+          ">
+            🔍 Buscando startups...
+          </div>
+        `;
+        document.body.appendChild(overlay);
       }
     } else {
-      const o = document.getElementById("__loading_overlay");
-      if (o) o.remove();
+      if (overlay) overlay.remove();
     }
   }
 
@@ -519,60 +729,162 @@
     resultsEl.style.display = show ? "none" : "grid";
   }
 
-  function showToast(msg, ms=2600) {
-    toast.textContent = msg;
+  function showToast(message, type = "success") {
+    toast.textContent = message;
+    toast.className = `toast ${type}`;
     toast.classList.remove("hidden");
-    toast.style.opacity = "1";
+    
     if (toast._timeout) clearTimeout(toast._timeout);
-    toast._timeout = setTimeout(()=>{ toast.classList.add("hidden"); }, ms);
+    
+    toast._timeout = setTimeout(() => {
+      toast.classList.add("hidden");
+    }, 3000);
   }
 
-  function formatInvestment(v) {
-    if (!v && v !== 0) return "—";
-    // if numeric
-    if (typeof v === "number") return formatCurrency(v);
-    // If string: try to parse; if contains currency sign, return as is
-    const str = String(v);
-    if (/[$€£]/.test(str)) return str;
-    const n = parseMaybeHumanNumber(str);
-    if (n !== null) return formatCurrency(n);
+  function showModal(modal) {
+    modal.classList.remove("hidden");
+    document.body.style.overflow = "hidden";
+  }
+
+  function hideModal(modal) {
+    modal.classList.add("hidden");
+    document.body.style.overflow = "";
+  }
+
+  function showPanel(panel) {
+    panel.classList.remove("hidden");
+  }
+
+  function hidePanel(panel) {
+    panel.classList.add("hidden");
+  }
+
+  function formatInvestment(value) {
+    if (!value || value === "Não informado") return "—";
+    
+    if (typeof value === "number") return formatCurrency(value);
+    
+    const str = String(value);
+    if (/[$€£R]/.test(str)) return str;
+    
+    const num = parseMaybeHumanNumber(str);
+    if (num !== null) return formatCurrency(num);
+    
     return str;
   }
 
   function parseMaybeHumanNumber(str) {
     if (!str) return null;
-    const s = String(str).replace(/\s+/g,'').replace(/\./g, '').replace(/,/g, '.');
-    // find numeric + suffix
-    const m = s.match(/([0-9]+(?:\.[0-9]+)?)([kKmMbB])?/)
-    if (!m) {
-      // last resort - try to extract digits
-      const digits = s.replace(/[^\d]/g,'');
-      if (!digits) return null;
-      return Number(digits);
+    
+    const cleaned = String(str)
+      .replace(/\s+/g, '')
+      .replace(/\./g, '')
+      .replace(/,/g, '.');
+    
+    const match = cleaned.match(/([0-9]+(?:\.[0-9]+)?)([kKmMbB])?/);
+    
+    if (!match) {
+      const digits = cleaned.replace(/[^\d]/g, '');
+      return digits ? Number(digits) : null;
     }
-    let n = Number(m[1]);
-    const suf = m[2] ? m[2].toUpperCase() : null;
-    if (suf === "K") n *= 1_000;
-    if (suf === "M") n *= 1_000_000;
-    if (suf === "B") n *= 1_000_000_000;
-    return Math.round(n);
+    
+    let num = Number(match[1]);
+    const suffix = match[2] ? match[2].toUpperCase() : null;
+    
+    if (suffix === "K") num *= 1_000;
+    if (suffix === "M") num *= 1_000_000;
+    if (suffix === "B") num *= 1_000_000_000;
+    
+    return Math.round(num);
   }
 
   function formatCurrency(num) {
     try {
-      return new Intl.NumberFormat('pt-BR', {style:'currency', currency:'BRL', maximumFractionDigits:0}).format(num);
+      return new Intl.NumberFormat('pt-BR', {
+        style: 'currency',
+        currency: 'BRL',
+        maximumFractionDigits: 0
+      }).format(num);
     } catch (e) {
-      return num;
+      return `R$ ${num.toLocaleString('pt-BR')}`;
     }
   }
 
-  function buildSectorCounts(list) {
-    const m = {};
-    list.forEach(s => { const k = s.setor || "—"; m[k] = (m[k]||0)+1; });
-    return m;
+  function escapeHtml(str) {
+    const text = String(str || "");
+    const map = {
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    };
+    return text.replace(/[&<>"']/g, c => map[c]);
   }
 
-  // minimal escape
-  function escapeHtml(s){ return String(s||"").replace(/[&<>"']/g, (c)=> ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  function persistSaved() {
+    try {
+      localStorage.setItem("savedStartups", JSON.stringify(savedSet));
+    } catch (e) {
+      console.error("Error saving to localStorage:", e);
+      showToast("Erro ao salvar favoritos", "error");
+    }
+  }
+
+  function loadSaved() {
+    try {
+      const saved = localStorage.getItem("savedStartups");
+      return saved ? JSON.parse(saved) : {};
+    } catch (e) {
+      console.error("Error loading from localStorage:", e);
+      return {};
+    }
+  }
+
+  function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+      const later = () => {
+        clearTimeout(timeout);
+        func(...args);
+      };
+      clearTimeout(timeout);
+      timeout = setTimeout(later, wait);
+    };
+  }
+
+  // Keyboard shortcuts
+  document.addEventListener('keydown', (e) => {
+    // ESC to close modals
+    if (e.key === 'Escape') {
+      if (!compareModal.classList.contains('hidden')) hideModal(compareModal);
+      if (!detailsModal.classList.contains('hidden')) hideModal(detailsModal);
+      if (!historyPanel.classList.contains('hidden')) hidePanel(historyPanel);
+    }
+    
+    // Ctrl/Cmd + K to focus search
+    if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+      e.preventDefault();
+      vcInput.focus();
+      vcInput.select();
+    }
+  });
+
+  // Print styles
+  window.addEventListener('beforeprint', () => {
+    document.querySelectorAll('.technical-data').forEach(el => {
+      el.style.display = 'none';
+    });
+    document.querySelector('.bottom-bar')?.style.setProperty('display', 'none');
+  });
+
+  window.addEventListener('afterprint', () => {
+    document.querySelectorAll('.technical-data').forEach(el => {
+      if (toggleRaw.checked) {
+        el.style.display = 'block';
+      }
+    });
+    document.querySelector('.bottom-bar')?.style.setProperty('display', 'flex');
+  });
 
 })();

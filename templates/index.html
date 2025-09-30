@@ -10,11 +10,7 @@
   <header class="header">
     <div class="header-inner">
       <div class="brand">
-        <!-- simples logo SVG -->
-        <svg class="logo" viewBox="0 0 48 48" width="40" height="40" aria-hidden="true">
-          <rect rx="8" width="48" height="48" fill="#0f62fe"/>
-          <path d="M12 34L20 14L28 34Z" fill="white"/>
-        </svg>
+        <img src="{{ url_for('static', filename='NvidiaLogo.jpeg') }}" alt="Sua Logo" class="logo" style="width: 40px; height: 40px; object-fit: contain;">
         <div class="title-block">
           <h1>Descobrir Investimentos de VCs</h1>
           <p class="subtitle">Pesquise startups investidas por VCs, visualize resultados em cards e salve os favoritos.</p>
@@ -29,7 +25,8 @@
     </div>
   </header>
 
-  <main class="container">
+  <main class="main-container">
+    <!-- Search Panel -->
     <section class="search-panel card">
       <form id="searchForm" class="search-form" autocomplete="off">
         <div class="search-input-wrap">
@@ -37,31 +34,39 @@
           <button id="btnPesquisar" class="btn primary" type="submit">Pesquisar</button>
         </div>
         <div class="suggestions" id="suggestions"></div>
+        
+        <!-- Filters -->
         <div class="filters">
-          <div class="filter-item">
-            <label>Ano fundação</label>
-            <div class="row">
-              <input id="filter_year_from" type="number" placeholder="Desde (ex: 2010)" />
-              <input id="filter_year_to" type="number" placeholder="Até (ex: 2024)" />
+          <div class="filter-row">
+            <div class="filter-item">
+              <label>Ano fundação</label>
+              <div class="input-group">
+                <input id="filter_year_from" type="number" placeholder="Desde (ex: 2010)" />
+                <input id="filter_year_to" type="number" placeholder="Até (ex: 2024)" />
+              </div>
+            </div>
+            <div class="filter-item">
+              <label>Setor</label>
+              <input id="filter_sector" type="text" placeholder="Ex: fintech, health, SaaS" />
             </div>
           </div>
-          <div class="filter-item">
-            <label>Setor</label>
-            <input id="filter_sector" type="text" placeholder="Ex: fintech, health, SaaS" />
-          </div>
-          <div class="filter-item">
-            <label>Valor investimento (mín - máx)</label>
-            <div class="row">
-              <input id="filter_min_value" type="text" placeholder="ex: 100k" />
-              <input id="filter_max_value" type="text" placeholder="ex: 10M" />
+          
+          <div class="filter-row">
+            <div class="filter-item">
+              <label>Valor investimento</label>
+              <div class="input-group">
+                <input id="filter_min_value" type="text" placeholder="Min: 100k" />
+                <input id="filter_max_value" type="text" placeholder="Max: 10M" />
+              </div>
             </div>
-          </div>
-          <div class="filter-actions">
-            <button id="btnClearFilters" class="btn transparent" type="button">Limpar filtros</button>
+            <div class="filter-actions">
+              <button id="btnClearFilters" class="btn transparent" type="button">Limpar filtros</button>
+            </div>
           </div>
         </div>
       </form>
 
+      <!-- Examples -->
       <div class="examples">
         <strong>Sugestões:</strong>
         <div class="chips">
@@ -74,7 +79,8 @@
       </div>
     </section>
 
-    <section class="right-panel">
+    <!-- Stats and Chart - Now responsive -->
+    <div class="stats-container">
       <div class="stats card" id="statsPanel">
         <div class="stat-item">
           <div class="stat-title">Startups</div>
@@ -94,27 +100,30 @@
         <h3>Distribuição por setor</h3>
         <canvas id="sectorChart" width="400" height="180"></canvas>
       </div>
+    </div>
+
+    <!-- Results Section -->
+    <section class="results-section">
+      <div class="results-header">
+        <h2>Resultados</h2>
+        <div class="results-actions">
+          <label class="toggle-raw"><input id="toggleRaw" type="checkbox"> Mostrar dados técnicos</label>
+        </div>
+      </div>
+
+      <div id="results" class="results-grid"></div>
+
+      <div id="emptyState" class="empty-state">
+        <div class="empty-icon">🔍</div>
+        <h3>Nenhum resultado ainda</h3>
+        <p>Faça uma busca por VCs para descobrir startups investidas.</p>
+      </div>
     </section>
   </main>
 
-  <section class="results-wrapper container">
-    <div class="results-header">
-      <h2>Resultados</h2>
-      <div class="results-actions">
-        <label class="toggle-raw"><input id="toggleRaw" type="checkbox"> Mostrar JSON bruto</label>
-      </div>
-    </div>
-
-    <div id="results" class="results-grid"></div>
-
-    <div id="emptyState" class="empty-state">
-      <p>Ainda não há resultados. Faça uma busca por VCs para começar.</p>
-    </div>
-  </section>
-
   <!-- Bottom bar with compare/save actions -->
   <div class="bottom-bar">
-    <div>
+    <div class="selected-info">
       <span id="selectedCount">0</span> selecionado(s)
     </div>
     <div class="bottom-actions">
@@ -133,6 +142,14 @@
     </div>
   </div>
 
+  <!-- Startup Details Modal -->
+  <div id="detailsModal" class="modal hidden">
+    <div class="modal-content">
+      <button class="close" id="closeDetails">✕</button>
+      <div id="detailsContent"></div>
+    </div>
+  </div>
+
   <!-- History Panel -->
   <div id="historyPanel" class="side-panel hidden">
     <div class="side-header">
@@ -142,7 +159,7 @@
     <div id="historyList" class="history-list"></div>
   </div>
 
-  <!-- Toast / mensagens rápidas -->
+  <!-- Toast -->
   <div id="toast" class="toast hidden"></div>
 
   <script defer src="{{ url_for('static', filename='script.js') }}"></script>
