@@ -1,0 +1,6 @@
+# Conteúdo para o arquivo .dockerignore
+.git
+.gitignore
+venv/
+*.pyc
+__pycache__/

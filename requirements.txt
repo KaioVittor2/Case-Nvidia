@@ -1,0 +1,12 @@
+flask
+python-dotenv
+crewai
+crewai[tools]
+langchain-perplexity
+pandas
+requests
+flask_sqlalchemy
+exa-py
+cerebras-cloud-sdk
+httpx>=0.28.1
+requests>=2.32.3
